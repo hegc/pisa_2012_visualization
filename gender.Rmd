@@ -1,0 +1,224 @@
+Exploring gender and scores
+========================================================
+
+```{r load_libraries, message=FALSE}
+library(stringr)
+library(reshape2)
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(ggvis)
+library(maps)
+library(ggmap)
+library(rworldmap)
+library (grid)    
+library (scales)  
+```
+
+```{r load_data, echo=FALSE}
+setwd("..")
+sets <- c("item", "parent", "school", "scoredItem", "student")
+BaseDir <- "E:\\R\\PISA\\data"
+vizDir <- "E:\\R\\PISA\\viz"
+# function to build the file names
+fn_build <- function(file_name){
+ 
+  template <- c("2012.rda", "2012dict.rda")
+ 
+  file_name %>% 
+    vapply(str_join, template, template) %>% 
+    file.path(BaseDir, .)
+}
+
+# load the data
+sets %>% fn_build %>% lapply(load, .GlobalEnv)
+
+# clean
+#rm(fn_build, sets)
+```
+
+```{r modify_dictionaries, echo=FALSE}
+# function to convert to data-frames
+fn_make_df <- function(named_vector){
+  data.frame(
+    variable = attr(named_vector, "names"),
+    description = named_vector,
+    row.names = NULL
+  )
+}
+
+# there's a clever way to do this, but beyond me for naw
+dict_item2012 <- fn_make_df(item2012dict) 
+dict_parent2012 <- fn_make_df(parent2012dict) 
+dict_school2012 <- fn_make_df(school2012dict) 
+dict_scoredItem2012 <- fn_make_df(scoredItem2012dict) 
+dict_student2012 <- fn_make_df(student2012dict) 
+
+# clean
+#rm(fn_make_df)
+#rm(item2012dict, parent2012dict, school2012dict, scoredItem2012dict, student2012dict)
+```
+
+```{r usefulfn, echo=FALSE}
+extractPolygons <- function(shapes) {
+
+  dframe <- ldply(1:length(shapes@polygons), function(i) {
+    ob <- shapes@polygons[[i]]@Polygons
+    dframe <- ldply(1:length(ob), function(j) {
+      x <- ob[[j]]
+      co <- x@coords
+      data.frame(co, order=1:nrow(co), group=j)
+    })
+    dframe$region <- i
+    dframe$name <- shapes@polygons[[i]]@ID
+    dframe
+  })
+  # construct a group variable from both group and polygon:
+  dframe$group <- interaction(dframe$region, dframe$group)
+  
+  dframe
+}
+
+# To get a blank background on map
+new_theme_empty <- theme_bw()
+new_theme_empty$line <- element_blank()
+new_theme_empty$rect <- element_blank()
+new_theme_empty$strip.text <- element_blank()
+new_theme_empty$axis.text <- element_blank()
+new_theme_empty$plot.title <- element_blank()
+new_theme_empty$axis.title <- element_blank()
+new_theme_empty$plot.margin <- structure(c(0, 0, -1, -1), unit = "lines", valid.unit = 3L, class = "unit")
+```
+
+```{r gendermath, fig.width=8, fig.height=12, warning=FALSE, message=FALSE}
+#student2012.sub <- student2012[, c(1, 12, 501, 541, 546, 634)]
+student2012.sub <- student2012[, c('CNT', 'ST04Q01', 'PV1MATH', 'PV1READ', 'PV1SCIE', 'SENWGT_STU')]
+colnames(student2012.sub)[1] <- "name"
+student2012.sub$PV1MATH <- as.numeric(student2012.sub$PV1MATH)
+student2012.sub$PV1READ <- as.numeric(student2012.sub$PV1READ)
+student2012.sub$PV1SCIE <- as.numeric(student2012.sub$PV1SCIE)
+student2012.sub$SENWGT_STU <- as.numeric(student2012.sub$SENWGT_STU)
+student2012.sub.summary.gap <- summarise(group_by(student2012.sub, name), 
+                  mathgap=mean(PV1MATH[ST04Q01=="Male"], na.rm=T)-
+                          mean(PV1MATH[ST04Q01=="Female"], na.rm=T),
+                  wmathgap=weighted.mean(PV1MATH[ST04Q01=="Male"], w=SENWGT_STU[ST04Q01=="Male"], na.rm=T)-
+                          weighted.mean(PV1MATH[ST04Q01=="Female"], w=SENWGT_STU[ST04Q01=="Female"], na.rm=T),
+                  mtest.stat = t.test(PV1MATH[ST04Q01=="Male"], PV1MATH[ST04Q01=="Female"])$statistic, 
+                  mp.value = t.test(PV1MATH[ST04Q01=="Male"], PV1MATH[ST04Q01=="Female"])$p.value,
+                  readgap=mean(PV1READ[ST04Q01=="Male"], na.rm=T)-mean(PV1READ[ST04Q01=="Female"], na.rm=T),
+                  rtest.stat = t.test(PV1READ[ST04Q01=="Male"], PV1READ[ST04Q01=="Female"])$statistic, 
+                  rp.value = t.test(PV1READ[ST04Q01=="Male"], PV1READ[ST04Q01=="Female"])$p.value,
+                  sciencegap=mean(PV1SCIE[ST04Q01=="Male"], na.rm=T)-mean(PV1SCIE[ST04Q01=="Female"], na.rm=T),
+                  stest.stat = t.test(PV1SCIE[ST04Q01=="Male"], PV1SCIE[ST04Q01=="Female"])$statistic, 
+                  sp.value = t.test(PV1SCIE[ST04Q01=="Male"], PV1SCIE[ST04Q01=="Female"])$p.value,                                         
+                  minmale=min(PV1MATH[ST04Q01=="Male"], na.rm=T), 
+                  minfemale=min(PV1MATH[ST04Q01=="Female"], na.rm=T), 
+                  maxmale=max(PV1MATH[ST04Q01=="Male"], na.rm=T), 
+                  maxfemale=max(PV1MATH[ST04Q01=="Female"], na.rm=T), 
+                  propmale=length(PV1MATH[ST04Q01=="Male"])/length(PV1MATH), 
+                  propfemale=length(PV1MATH[ST04Q01=="Female"])/length(PV1MATH))
+qplot(mathgap, wmathgap, data=student2012.sub.summary.gap, xlab="Mean", ylab="Weighted Mean",
+      xlim=c(-30,30), ylim=c(-30,30)) + geom_abline(slope=1) + theme(aspect.ratio=1)
+student2012.sub.summary.gap$msig <- ifelse(student2012.sub.summary.gap$mp.value>0.05, "none", TRUE)
+student2012.sub.summary.gap$msig[student2012.sub.summary.gap$msig==TRUE&student2012.sub.summary.gap$mtest.stat>0] <- "male"
+student2012.sub.summary.gap$msig[student2012.sub.summary.gap$msig==TRUE&student2012.sub.summary.gap$mtest.stat<0] <- "female"
+student2012.sub.summary.gap$name <- factor(student2012.sub.summary.gap$name, 
+      levels=student2012.sub.summary.gap$name[order(student2012.sub.summary.gap$mathgap)])
+qplot(name, mathgap, data=student2012.sub.summary.gap, size=propmale, color=msig) + 
+  xlab("") +
+  scale_colour_manual("Significant", values=c("male"="skyblue", "female"="pink", "none"="lightgreen")) +
+  scale_y_continuous("Math Score Gap", breaks=seq(-30, 30, 5)) + 
+  scale_size("Prop male") +
+   geom_hline(yintercept=0, colour="grey80") + coord_flip() + theme_bw() + theme(legend.position="bottom")
+# Test colors
+#qplot(name, mathgap, data=student2012.sub.summary.gap, size=propmale, color=msig) + 
+#  xlab("") +
+#  scale_colour_manual("Significant", values=c("male"=dichromat("skyblue"), "female"=dichromat("pink"), "none"=dichromat("lightgreen"))) +
+#  scale_y_continuous("Math Score Gap", breaks=seq(-30, 30, 5)) + 
+#  scale_size("Prop male") +
+#   geom_hline(yintercept=0, colour="grey80") + coord_flip() + theme_bw() + theme(legend.position="bottom")
+#ggsave("gendermathgap.pdf", width=7, height=14)
+student2012.sub.summary.gap$name <- factor(student2012.sub.summary.gap$name, 
+      levels=student2012.sub.summary.gap$name[order(student2012.sub.summary.gap$maxmale)])
+qplot(name, maxmale, data=student2012.sub.summary.gap, color=I("skyblue")) + 
+  xlab("") +
+  geom_point(aes(y=maxfemale), colour="pink") + 
+  scale_y_continuous("High Math") + coord_flip() + theme_bw()
+#ggsave("gendermathtop.pdf", width=3.5, height=7)
+student2012.sub.summary.gap$name <- factor(student2012.sub.summary.gap$name, 
+      levels=student2012.sub.summary.gap$name[order(student2012.sub.summary.gap$minfemale)])
+qplot(name, minmale, data=student2012.sub.summary.gap, color=I("skyblue")) + 
+  xlab("") +
+  geom_point(aes(y=minfemale), colour="pink") + 
+  scale_y_continuous("Low Math") + coord_flip() + theme_bw()
+#ggsave("gendermathbottom.pdf", width=3.5, height=7)
+#
+student2012.sub.summary.gap$rsig <- ifelse(student2012.sub.summary.gap$rp.value>0.05, "none", TRUE)
+student2012.sub.summary.gap$rsig[student2012.sub.summary.gap$rsig==TRUE&student2012.sub.summary.gap$rtest.stat>0] <- "male"
+student2012.sub.summary.gap$rsig[student2012.sub.summary.gap$rsig==TRUE&student2012.sub.summary.gap$rtest.stat<0] <- "female"
+student2012.sub.summary.gap$name <- factor(student2012.sub.summary.gap$name, 
+      levels=student2012.sub.summary.gap$name[order(student2012.sub.summary.gap$readgap)])
+qplot(name, readgap, data=student2012.sub.summary.gap, size=propmale, color=rsig) + 
+  xlab("") +
+  scale_colour_manual("Significant", values=c("male"="skyblue", "female"="pink", "none"="lightgreen")) +
+  scale_y_continuous("Reading Score Gap") + 
+  scale_size("Prop male") +
+   geom_hline(yintercept=0, colour="grey80") + coord_flip() + theme_bw() + theme(legend.position="none")
+#ggsave("genderreadgap.pdf", width=5, height=8)
+student2012.sub.summary.gap$ssig <- ifelse(student2012.sub.summary.gap$sp.value>0.05, "none", TRUE)
+student2012.sub.summary.gap$ssig[student2012.sub.summary.gap$ssig==TRUE&student2012.sub.summary.gap$stest.stat>0] <- "male"
+student2012.sub.summary.gap$ssig[student2012.sub.summary.gap$ssig==TRUE&student2012.sub.summary.gap$stest.stat<0] <- "female"
+student2012.sub.summary.gap$name <- factor(student2012.sub.summary.gap$name, 
+      levels=student2012.sub.summary.gap$name[order(student2012.sub.summary.gap$sciencegap)])
+qplot(name, sciencegap, data=student2012.sub.summary.gap, size=propmale, color=ssig) + 
+  xlab("") +
+  scale_colour_manual("Significant", values=c("male"="skyblue", "female"="pink", "none"="lightgreen")) +
+  scale_y_continuous("Science Score Gap") + 
+  scale_size("Prop male") +
+   geom_hline(yintercept=0, colour="grey80") + coord_flip() + theme_bw()
+#ggsave("gendergap.pdf", width=10, height=14)
+
+```
+
+```{r maps, fig.width=12, fig.height=7, warning=FALSE, message=FALSE}
+# Extract map polygons for modern world
+world <- getMap(resolution = "low")
+library(plyr)
+world.polys <- extractPolygons(world)
+detach("package:plyr")
+# Now add data
+student2012.sub.summary.gap$name <- as.character(student2012.sub.summary.gap$name)
+student2012.sub.summary.gap$name[student2012.sub.summary.gap$name=="Serbia"] <- "Republic of Serbia"
+student2012.sub.summary.gap$name[student2012.sub.summary.gap$name=="Korea"] <- "South Korea"
+student2012.sub.summary.gap$name[student2012.sub.summary.gap$name=="Chinese Taipei"] <- "Taiwan"
+student2012.sub.summary.gap$name[student2012.sub.summary.gap$name=="Slovak Republic"] <- "Slovakia"
+student2012.sub.summary.gap$name[student2012.sub.summary.gap$name=="Russian Federation"] <- "Russia"
+student2012.sub.summary.gap$name[student2012.sub.summary.gap$name=="Perm(Russian Federation)"] <- "Russia"
+student2012.sub.summary.gap$name[student2012.sub.summary.gap$name=="Hong Kong-China"] <- "Hong Kong S.A.R."
+student2012.sub.summary.gap$name[student2012.sub.summary.gap$name=="China-Shanghai"] <- "China"
+student2012.sub.summary.gap$name[student2012.sub.summary.gap$name=="China-Macau"] <- "China"
+student2012.sub.summary.gap$name[student2012.sub.summary.gap$name=="Connecticut (USA)"] <- "United States of America"
+student2012.sub.summary.gap$name[student2012.sub.summary.gap$name=="Florida (USA)"] <- "United States of America"
+student2012.sub.summary.gap$name[student2012.sub.summary.gap$name=="Massachusetts (USA)"] <- "United States of America"
+
+student2012.sub.map <- left_join(student2012.sub.summary.gap, world.polys)
+ggplot(data=world.polys) + geom_path(aes(x=X1, y=X2, order=order, group=group), colour=I("grey90")) + 
+  geom_polygon(data=student2012.sub.map, aes(x=X1, y=X2, order=order, group=group, fill=msig)) +
+  scale_fill_manual("Significant", values=c("male"="skyblue", "female"="pink", "none"="lightgreen")) +
+  new_theme_empty + theme(legend.position="none")
+#ggsave("gendermathmap.pdf", width=12, height=7)
+ggplot(data=world.polys) + geom_path(aes(x=X1, y=X2, order=order, group=group), colour=I("grey90")) + 
+  geom_polygon(data=student2012.sub.map, aes(x=X1, y=X2, order=order, group=group, fill=rsig)) +
+  scale_fill_manual("Significant", values=c("male"="skyblue", "female"="pink", "none"="lightgreen")) +
+  new_theme_empty + theme(legend.position="none")
+#ggsave("genderreadmap.pdf", width=12, height=7)
+ggplot(data=world.polys) + geom_path(aes(x=X1, y=X2, order=order, group=group), colour=I("grey90")) + 
+  geom_polygon(data=student2012.sub.map, aes(x=X1, y=X2, order=order, group=group, fill=ssig)) +
+  scale_fill_manual("Significant", values=c("male"="skyblue", "female"="pink", "none"="lightgreen")) +
+  new_theme_empty + theme(legend.position="none")
+#ggsave("gendermap.pdf", width=12, height=8)
+#ggplot(data=world.polys) + geom_path(aes(x=X1, y=X2, order=order, group=group), colour=I("grey90")) + 
+#  geom_polygon(data=student2012.sub.map, aes(x=X1, y=X2, order=order, group=group, fill=rsig)) +
+#  scale_fill_manual("Significant", values=c("male"=dichromat("skyblue"), "female"=dichromat("pink"), "none"=dichromat("lightgreen"))) +
+#  new_theme_empty + theme(legend.position="none")
+```

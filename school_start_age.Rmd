@@ -1,0 +1,174 @@
+Exploring gender and scores
+========================================================
+
+```{r load_libraries, message=FALSE}
+library(stringr)
+library(reshape2)
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(ggvis)
+library(maps)
+library(ggmap)
+library(rworldmap)
+library (grid)    
+library (scales)  
+```
+
+```{r load_data, echo=FALSE}
+BaseDir <- "E:\\R\\PISA\\data"
+vizDir <- "E:\\R\\PISA\\viz"
+
+sets <- c("item", "parent", "school", "scoredItem", "student")
+
+# function to build the file names
+fn_build <- function(file_name){
+ 
+  template <- c("2012.rda", "2012dict.rda")
+ 
+  file_name %>% 
+    vapply(str_join, template, template) %>% 
+    file.path(BaseDir, .)
+}
+
+# load the data
+sets %>% fn_build %>% lapply(load, .GlobalEnv)
+
+# clean
+#rm(fn_build, sets)
+```
+
+```{r modify_dictionaries, echo=FALSE}
+# function to convert to data-frames
+fn_make_df <- function(named_vector){
+  data.frame(
+    variable = attr(named_vector, "names"),
+    description = named_vector,
+    row.names = NULL
+  )
+}
+
+# there's a clever way to do this, but beyond me for naw
+dict_item2012 <- fn_make_df(item2012dict) 
+dict_parent2012 <- fn_make_df(parent2012dict) 
+dict_school2012 <- fn_make_df(school2012dict) 
+dict_scoredItem2012 <- fn_make_df(scoredItem2012dict) 
+dict_student2012 <- fn_make_df(student2012dict) 
+
+# clean
+#rm(fn_make_df)
+#rm(item2012dict, parent2012dict, school2012dict, scoredItem2012dict, student2012dict)
+```
+
+```{r usefulfn, echo=FALSE}
+extractPolygons <- function(shapes) {
+
+  dframe <- ldply(1:length(shapes@polygons), function(i) {
+    ob <- shapes@polygons[[i]]@Polygons
+    dframe <- ldply(1:length(ob), function(j) {
+      x <- ob[[j]]
+      co <- x@coords
+      data.frame(co, order=1:nrow(co), group=j)
+    })
+    dframe$region <- i
+    dframe$name <- shapes@polygons[[i]]@ID
+    dframe
+  })
+  # construct a group variable from both group and polygon:
+  dframe$group <- interaction(dframe$region, dframe$group)
+  
+  dframe
+}
+
+# To get a blank background on map
+new_theme_empty <- theme_bw()
+new_theme_empty$line <- element_blank()
+new_theme_empty$rect <- element_blank()
+new_theme_empty$strip.text <- element_blank()
+new_theme_empty$axis.text <- element_blank()
+new_theme_empty$plot.title <- element_blank()
+new_theme_empty$axis.title <- element_blank()
+new_theme_empty$plot.margin <- structure(c(0, 0, -1, -1), unit = "lines", valid.unit = 3L, class = "unit")
+```
+```
+```
+
+```{r age, fig.width=8, fig.height=12, warning=FALSE, message=FALSE}
+subcolumn <- student2012dict[c(1, 6, 12, 14, 501, 541, 546, 634)]
+
+student2012.sub <- student2012[, c('CNT','SCHOOLID','ST04Q01','ST06Q01','PV1MATH','PV1READ','PV1SCIE','SENWGT_STU')]
+colnames(student2012.sub)[1] <- "name"
+# Now add data
+student2012.sub$name <- as.character(student2012.sub$name)
+student2012.sub$name[student2012.sub$name=="Serbia"] <- "Republic of Serbia"
+student2012.sub$name[student2012.sub$name=="Korea"] <- "South Korea"
+student2012.sub$name[student2012.sub$name=="Chinese Taipei"] <- "Taiwan"
+student2012.sub$name[student2012.sub$name=="Slovak Republic"] <- "Slovakia"
+student2012.sub$name[student2012.sub$name=="Russian Federation"] <- "Russia"
+student2012.sub$name[student2012.sub$name=="Perm(Russian Federation)"] <- "Russia"
+student2012.sub$name[student2012.sub$name=="Hong Kong-China"] <- "Hong Kong S.A.R."
+student2012.sub$name[student2012.sub$name=="China-Shanghai"] <- "China"
+student2012.sub$name[student2012.sub$name=="China-Macau"] <- "China"
+student2012.sub$name[student2012.sub$name=="Connecticut (USA)"] <- "United States of America"
+student2012.sub$name[student2012.sub$name=="Florida (USA)"] <- "United States of America"
+student2012.sub$name[student2012.sub$name=="Massachusetts (USA)"] <- "United States of America"
+student2012.sub$ST06Q01 <- as.numeric(student2012.sub$ST06Q01)
+student2012.sub$PV1MATH <- as.numeric(student2012.sub$PV1MATH)
+student2012.sub$PV1READ <- as.numeric(student2012.sub$PV1READ)
+student2012.sub$PV1SCIE <- as.numeric(student2012.sub$PV1SCIE)
+student2012.sub$SENWGT_STU <- as.numeric(student2012.sub$SENWGT_STU)
+student2012.sub.age <- summarise(group_by(student2012.sub, name), 
+                  math4 = mean(PV1MATH[ST06Q01 == 4], na.rm = T), 
+                  math5 = mean(PV1MATH[ST06Q01 == 5], na.rm = T), 
+                  math6 = mean(PV1MATH[ST06Q01 == 6], na.rm = T), 
+                  math7 = mean(PV1MATH[ST06Q01 == 7], na.rm = T), 
+                  math8 = mean(PV1MATH[ST06Q01 >  7], na.rm = T))
+student2012.sub.age.m <- melt(student2012.sub.age)
+student2012.sub.age.m$variable <- substr(student2012.sub.age.m$variable, 5, 5)
+student2012.sub.age.m$variable <- as.numeric(student2012.sub.age.m$variable)
+qplot(variable, value, data=student2012.sub.age.m, xlab="Age at start", ylab="Math Score", 
+      geom=c("point","smooth"), se=F, group=name) + 
+ facet_wrap(~name, ncol=8) + theme_bw() 
+# ggsave("school-start.pdf", width=14, height=14)
+student2012.sub.age <- summarise(group_by(student2012.sub, name), 
+                  read4 = mean(PV1READ[ST06Q01 == 4], na.rm = T), 
+                  read5 = mean(PV1READ[ST06Q01 == 5], na.rm = T), 
+                  read6 = mean(PV1READ[ST06Q01 == 6], na.rm = T), 
+                  read7 = mean(PV1READ[ST06Q01 == 7], na.rm = T), 
+                  read8 = mean(PV1READ[ST06Q01 >  7], na.rm = T))
+student2012.sub.age.m <- melt(student2012.sub.age)
+student2012.sub.age.m$variable <- substr(student2012.sub.age.m$variable, 5, 5)
+student2012.sub.age.m$variable <- as.numeric(student2012.sub.age.m$variable)
+qplot(variable, value, data=student2012.sub.age.m, xlab="Age at start", ylab="Reading Score", 
+      geom=c("point","smooth"), se=F, group=name) + 
+ facet_wrap(~name, ncol=8) + theme_bw() 
+student2012.sub.age <- summarise(group_by(student2012.sub, name), 
+                  scie4 = mean(PV1SCIE[ST06Q01 == 4], na.rm = T), 
+                  scie5 = mean(PV1SCIE[ST06Q01 == 5], na.rm = T), 
+                  scie6 = mean(PV1SCIE[ST06Q01 == 6], na.rm = T), 
+                  scie7 = mean(PV1SCIE[ST06Q01 == 7], na.rm = T), 
+                  scie8 = mean(PV1SCIE[ST06Q01 >  7], na.rm = T))
+student2012.sub.age.m <- melt(student2012.sub.age)
+student2012.sub.age.m$variable <- substr(student2012.sub.age.m$variable, 5, 5)
+student2012.sub.age.m$variable <- as.numeric(student2012.sub.age.m$variable)
+qplot(variable, value, data=student2012.sub.age.m, xlab="Age at start", ylab="Science Score", 
+      geom=c("point","smooth"), se=F, group=name) + 
+ facet_wrap(~name, ncol=8) + theme_bw() 
+```
+
+```{r maps, fig.width=12, fig.height=8, warning=FALSE, message=FALSE}
+# Extract map polygons for modern world
+world <- getMap(resolution = "low")
+library(plyr)
+world.polys <- extractPolygons(world)
+detach("package:plyr")
+
+student2012.sub.agemedian <- summarise(group_by(student2012.sub, name), medianstart = median(ST06Q01, na.rm=T))
+student2012.sub.agemedian$medianstart <- factor(student2012.sub.agemedian$medianstart)
+student2012.sub.map <- left_join(student2012.sub.agemedian, world.polys)
+ggplot(data=world.polys) + geom_path(aes(x=X1, y=X2, order=order, group=group), colour=I("grey90")) + 
+  geom_polygon(data=student2012.sub.map, aes(x=X1, y=X2, order=order, group=group, fill=medianstart)) +
+  scale_fill_discrete("Median Start Age") +
+  new_theme_empty + theme(legend.position="top")
+#ggsave("agestartmap.pdf", width=12, height=7)
+```

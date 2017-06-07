@@ -1,0 +1,230 @@
+Grouping schools by poverty
+========================================================
+
+```{r load, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+library(reshape2)
+library(ggplot2)
+library(dplyr)
+#setwd("..")
+BaseDir <- "E:\\R\\PISA\\data"
+vizDir <- "E:\\R\\PISA\\viz"
+
+sets <- c("item", "parent", "school", "scoredItem", "student")
+
+# function to build the file names
+fn_build <- function(file_name) {
+
+    template <- c("2012.rda", "2012dict.rda")
+
+    file_name %>% vapply(paste0, template, template) %>% file.path(BaseDir, 
+        .)
+}
+
+# load the data
+sets %>% fn_build %>% lapply(load, .GlobalEnv)
+
+
+# function to convert to data-frames
+fn_make_df <- function(named_vector) {
+    data.frame(variable = attr(named_vector, "names"), description = named_vector, 
+        row.names = NULL)
+}
+
+# there's a clever way to do this, but beyond me for naw
+dict_item2012 <- fn_make_df(item2012dict)
+dict_parent2012 <- fn_make_df(parent2012dict)
+dict_school2012 <- fn_make_df(school2012dict)
+dict_scoredItem2012 <- fn_make_df(scoredItem2012dict)
+dict_student2012 <- fn_make_df(student2012dict)
+
+rm(fn_make_df, fn_build, sets, item2012dict, parent2012dict, school2012dict, scoredItem2012dict, student2012dict)
+
+
+#choose which of the 5 PVs to use for each subject
+student2012$math = as.numeric(student2012[, "PV1MATH"])
+student2012$read = as.numeric(student2012[, "PV1READ"])
+student2012$sci = as.numeric(student2012[, "PV1SCIE"])
+```
+
+```{r usefulfn, echo=FALSE, message=FALSE, warning=FALSE}
+fix_country = function(df) {
+df$CNT = as.character(df$CNT)
+df$CNT[df$CNT=="Serbia"] <- "Republic of Serbia"
+df$CNT[df$CNT=="Korea"] <- "South Korea"
+df$CNT[df$CNT=="Chinese Taipei"] <- "Taiwan"
+df$CNT[df$CNT=="Slovak Republic"] <- "Slovakia"
+df$CNT[df$CNT=="Russian Federation"] <- "Russia"
+df$CNT[df$CNT=="Perm(Russian Federation)"] <- "Russia"
+df$CNT[df$CNT=="Hong Kong-China"] <- "Hong Kong S.A.R."
+df$CNT[df$CNT=="China-Shanghai"] <- "China"
+df$CNT[df$CNT=="China-Macau"] <- "China"
+df$CNT[df$CNT=="Connecticut (USA)"] <- "United States of America"
+df$CNT[df$CNT=="Florida (USA)"] <- "United States of America"
+df$CNT[df$CNT=="Massachusetts (USA)"] <- "United States of America"
+
+df
+}
+
+```
+
+```{r school}
+# Extract relevant variables from schools table
+school2012.sub = school2012 %>% select(CNT, SCHOOLID, SC22Q01,
+                                       SC22Q02, SC22Q03, SC22Q04,
+                                       SC22Q05, SC22Q06, SC22Q07,
+                                       SC22Q08, SC22Q09, SC22Q10,
+                                       SC22Q11, SC22Q12, SC22Q13, SC04Q01)
+# Extract scores from students table
+student2012.sub = student2012 %>% select(CNT, SCHOOLID, math, read, sci, ST08Q01, ST09Q01)
+school2012.sub = fix_country(school2012.sub)
+student2012.sub = fix_country(student2012.sub)
+
+# Truancy data by student
+truancy = student2012.sub %>% group_by(CNT, SCHOOLID) %>% left_join(school2012.sub, by = c("CNT", "SCHOOLID"))
+```
+
+```{r truancy, fig.width=6, fig.height=5}
+# school perception of truancy vs math scores
+# percentage of schools reporting high truancy issues
+df = school2012.sub %>% group_by(CNT) %>% summarise(truancy = sum(SC22Q01 == "A lot", na.rm=T) / length(CNT) ) %>% arrange(desc(truancy)) %>% 
+  left_join(
+    student2012.sub %>% group_by(CNT) %>% summarise(m_math = mean(math))
+  )
+# Russia and china are outliers, reporting a lot of truancy, but still having high scores
+# A lot of schools with low truancy still have low scores
+qplot(x = truancy, y = m_math, data = df, xlab="School's proportion of truancy ", 
+      ylab="Math Score") + stat_smooth(method="lm", se = FALSE)
+
+# student self reported truancy within the last two weeks
+# percentage of high truancy students
+df2 = student2012.sub %>% group_by(CNT) %>% summarise(truancy_student = sum(ST08Q01 == "Five or more times  " |
+            ST08Q01 == "Three or four times  " | 
+            ST08Q01 == "One or two times  ", na.rm=T) / length(CNT)) %>% 
+          arrange(desc(truancy_student)) %>% 
+          left_join(student2012.sub %>% group_by(CNT) %>% summarise(m_math = mean(math)))
+
+# No schools stand out as outliers here
+qplot(truancy_student, m_math, data = df2, 
+      xlab="Proportion of students reporting missing at least one day in past two weeks", 
+      ylab="Math Score") + stat_smooth(method="lm", se = FALSE)
+```
+
+```{r drugs, fig.width=6, fig.height=5}
+# percentage of schools reporting drug problems
+drugs = school2012.sub %>% group_by(CNT) %>% 
+  summarise(drug = sum(SC22Q07 == "A lot" | SC22Q07 == "To some extent", na.rm=T) / length(CNT)) %>% 
+  arrange(desc(drug)) %>%
+   left_join(student2012.sub %>% group_by(CNT) %>% summarise(m_math = mean(math)))
+# Most countries report few drug problems, Kazakhstan reports a lot, China surprisingly also, Costa Rica, Colombia, Russia, Canada, USA
+qplot(x = drug, y = m_math, data = drugs, xlab="Proportion of schools reporting some drug problems", 
+      ylab="Math Score") + stat_smooth(method="lm", se = FALSE)
+
+#school2012.sub %>% group_by(CNT) %>% summarise(drug = sum(SC22Q07 == "A lot", na.rm=T) / length(CNT)) %>% 
+#  arrange(desc(drug))
+```
+
+Competition between schools, number of schools students could choose to attend
+
+```{r competition, fig.width=6, fig.height=5}
+comp = school2012.sub %>% 
+  select(CNT, SCHOOLID, SC04Q01) %>% 
+  group_by(CNT) %>%
+  summarise(other = sum(SC04Q01 == "Two or More", na.rm=T) / length(CNT)) %>% 
+  arrange(desc(other)) %>%
+   left_join(student2012.sub %>% group_by(CNT) %>% summarise(m_math = mean(math)))
+
+qplot(other, m_math, data = comp, xlab="Proportion of students who have school choice", ylab="Math Score") +
+  stat_smooth(method="lm", se = FALSE)
+```
+
+
+Math teacher shortages
+
+```{r shortages, fig.width=12, fig.height=10}
+# SC11Q02, SC11Q03 Computers
+# SC14Q02 - Math teacher shortage
+# SC14Q07 - Computer shortage
+# SC14Q08 - Internet shortage
+# SC14Q09 - Software shortage
+# SC14Q10 - Library material shortage
+# SC14Q11 - Buildings/Grounds shortage
+# SC14Q12 - Heating cooling shortage
+# SC14Q13 - Instructional space shortage
+#school2012.sub = school2012 %>% select(CNT, SCHOOLID, SC11Q02, SC11Q03, SC14Q02, SC14Q07, SC14Q08, SC14Q09, SC14Q10, SC14Q11, SC14Q12, SC14Q13)
+school2012.sub = school2012 %>% select(CNT, SCHOOLID, SC14Q02, SC14Q07, SC14Q10)
+student2012.sub = student2012 %>% select(CNT, SCHOOLID, math, read, sci)
+school2012.sub = fix_country(school2012.sub)
+student2012.sub = fix_country(student2012.sub)
+
+scores_by_school = student2012.sub %>% group_by(CNT, SCHOOLID) %>% 
+  summarise(mmath = mean(math), mread = mean(read), msci = mean(sci))
+
+df = scores_by_school %>% left_join(school2012.sub)
+df$SC14Q02 <- factor(df$SC14Q02, labels=c(0,1,2,3))
+df$SC14Q07 <- factor(df$SC14Q07, labels=c(0,1,2,3))
+df$SC14Q10 <- factor(df$SC14Q10, labels=c(0,1,2,3))
+df.mshort <- df[!is.na(df$SC14Q02),] %>% group_by(CNT, SC14Q02) %>% summarise(mmath2 = mean(mmath, na.rm=T))
+qplot(SC14Q02, mmath2, data = df.mshort, facets = ~CNT, 
+      xlab="Math teacher shortage (0=None, 1=Very little, 2=To some extent, 3=A lot)", 
+      ylab="Math Score", geom=c("point","line"), group=CNT)
+df.lshort <- df[!is.na(df$SC14Q10),] %>% group_by(CNT, SC14Q10) %>% summarise(mmath2 = mean(mmath, na.rm=T))
+qplot(SC14Q10, mmath2, data = df.lshort, facets = ~CNT, 
+      xlab="Library shortages (0=None, 1=Very little, 2=To some extent, 3=A lot)", 
+      ylab="Math Score", geom=c("point","line"), group=CNT)
+df2 <- summarise(group_by(df[!is.na(df$SC14Q02),], CNT, SC14Q02), teachers = mean(mmath, na.rm=T))
+colnames(df2)[2] <- "levels"
+df3 <- summarise(group_by(df[!is.na(df$SC14Q07),], CNT, SC14Q07), computers = mean(mmath, na.rm=T))
+colnames(df3)[2] <- "levels"
+df4 <- summarise(group_by(df[!is.na(df$SC14Q10),], CNT, SC14Q10), libmaterials = mean(mmath, na.rm=T))
+colnames(df4)[2] <- "levels"
+df.all <- merge(df2, df3)
+df.all <- merge(df.all, df4)
+df.m <- melt(df.all, id=c("CNT", "levels"))
+colnames(df.m)[4] <- "math"
+qplot(levels, math, data = df.m, facets = ~CNT, 
+      xlab="Shortages (0=None, 1=Very little, 2=To some extent, 3=A lot)", 
+      ylab="Math Score", geom=c("point","line"), group=variable, colour=variable) +
+      scale_colour_manual("Type", values=c("teachers"="#1B9E77", "computers"="#D95F02", "libmaterials"="#7570B3")) +
+      theme(legend.position="bottom") 
+#ggsave("shortages.pdf", width=14, height=14)
+qplot(SC14Q02, data=df, geom="histogram", xlab="Teacher shortage", fill=I("#1B9E77"))
+#ggsave("teacher-shortages.pdf", width=5, height=5)
+qplot(SC14Q07, data=df, geom="histogram", xlab="Computer shortage", fill=I("#D95F02"))
+#ggsave("computer-shortages.pdf", width=5, height=5)
+qplot(SC14Q10, data=df, geom="histogram", xlab="Library materials shortage", fill=I("#7570B3"))
+#ggsave("library-shortages.pdf", width=5, height=5)
+```
+
+
+looking at just the US
+```{r shortages1}
+library(ggplot2)
+qplot(SC14Q02, mmath, data = df %>% group_by(CNT, SC14Q02) %>% 
+        filter(CNT == "United States of America"), geom="boxplot")
+```
+
+
+```{r shortages2, eval=FALSE}
+library(ggplot2)
+df2 = df%>% select(CNT, SCHOOLID, mmath, mread, msci, SC14Q02,
+                  SC14Q07, SC14Q08, SC14Q09, SC14Q10, SC14Q11,
+                  SC14Q12, SC14Q13)
+for(i in 6:13) {
+  df2[,i] = as.numeric(df2[,i])
+}
+
+df2$sum = apply(df2[,6:13], 1, sum, na.rm=T)
+qplot(x = sum, y = m2, data = df2 %>% group_by(CNT, sum) %>% summarise(m2 = mean(mmath)), facets=~CNT)
+
+qplot(x = pSC14Q07, mmath2, data = 
+df2 %>% group_by(CNT) %>% 
+  summarise(pSC14Q07 = sum(SC14Q07 == 4, na.rm=T) / length(CNT),
+            mmath2 = mean(mmath)) %>% 
+  arrange(pSC14Q07)
+)
+```
+
+
+
+
+
